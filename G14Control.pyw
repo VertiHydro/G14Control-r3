@@ -52,7 +52,7 @@ def remap(source, ol, oh, nl, nh):
 
 def get_power_plans():
     global dpp_GUID, app_GUID
-    all_plans = subprocess.check_output(["powercfg", "/l"])
+    all_plans = subprocess.run("powercfg /l", capture_output=True, shell=True).stdout
     for i in str(all_plans).split('\\n'):
         if i.find(config['default_power_plan']) != -1:
             dpp_GUID = i.split(' ')[3]
@@ -61,7 +61,7 @@ def get_power_plans():
 
 def set_power_plan(GUID, should_notify=False):
     global dpp_GUID, app_GUID
-    subprocess.check_output(["powercfg", "/s", GUID])
+    subprocess.run("powercfg /s {}".format(GUID), capture_output=True, shell=True).stdout
     if should_notify:
         if GUID == dpp_GUID:
             notify("set power plan to " + config['default_power_plan'], config['notification_time'])
@@ -146,7 +146,7 @@ def gaming_check():     # Checks if user specified games/programs are running, a
     previous_plan = None    # Define the previous plan to switch back to
 
     while True: # Continuously check every 10 seconds
-        output = os.popen('wmic process get description, processid').read() 
+        output = subprocess.run("wmic process get description, processid", capture_output=True, shell=True).stdout 
         process = output.split("\n")
         processes = set(i.split(" ")[0] for i in process)
         targets = set(default_gaming_plan_games)    # List of user defined processes
@@ -184,22 +184,22 @@ def do_notify(message, sleep_time):
 def get_current():
     global ac, current_plan, current_boost_mode, current_TDP
     notify(
-        "Plan: " + current_plan + "     dGPU: " + (["Off", "On"][get_dgpu()]) + "\n" +
-        "Boost: " + (["Disabled", "Enabled", "Aggressive", "Efficient Enabled", "Efficient Aggressive"][int(get_boost()[2:])]) + "      TDP: " + str(float(current_TDP)/1000) + "W" + "\n" +
-        "Refresh Rate: " + (["60Hz", "120Hz"][get_screen()]) + "\n" +
+        "Plan: " + current_plan + "\n" +
+        "Boost: " + (get_boost()) + "     TDP: " + str(float(current_TDP)/1000) + "W" + "\n" +
         "Power: " + (["Battery", "AC"][bool(ac)]) + "     Auto Switching: " + (["Off", "On"][auto_power_switch]) + "\n",
         config['long_notification_time']
     )  # Let's print the current values
 
 
 def get_boost():
-    current_pwr = os.popen("powercfg /GETACTIVESCHEME")  # I know, it's ugly, but no other way to do that from py.
-    pwr_guid = current_pwr.readlines()[0].rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")  # Parse the GUID
-    pwr_settings = os.popen(
-        "powercfg /Q " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7"
-    )  # Let's get the boost option in the currently active power scheme
-    output = pwr_settings.readlines()  # We save the output to parse it afterwards
-    ac_boost = output[-3].rsplit(": ")[1].strip("\n")  # Parsing AC, assuming the DC is the same setting
+    current_pwr = subprocess.run("powercfg /GETACTIVESCHEME", capture_output=True, shell=True).stdout
+    pwr_guid = str(current_pwr, 'utf-8').rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")
+    pwr_settings = subprocess.run("powercfg /Q " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7", capture_output=True, shell=True).stdout  # Let's get the boost option in the currently active power scheme
+    output = str(pwr_settings, 'utf-8')  # We save the output to parse it afterwards
+    current_boost_num = int(re.split("(?<=\ AC Power Setting Index: 0x)(.*?)(?=\n)", output)[-2]) # Get the currently active boost value (e.g 000004)
+    corresponding_boost_num = (current_boost_num*4)+15 # Convert this to a corresponding value in teh split list of possible values found next
+    ac_boost = re.split("(?<=\: )(.*?)(?=\n)", output)[corresponding_boost_num].strip("\n") # Parsing AC, assuming the DC is the same setting
+    ac_boost = ac_boost.split("\r")[0] # remove the carriage return character
     # battery_boost = parse_boolean(output[-2].rsplit(": ")[1].strip("\n"))  # currently unused, we will set both
     return ac_boost
 
@@ -211,50 +211,50 @@ def set_boost(state, notification=True):
     global dpp_GUID, app_GUID
     #print("GUID ", dpp_GUID)
     set_power_plan(dpp_GUID)
-    current_pwr = os.popen("powercfg /GETACTIVESCHEME")  # Just to be safe, let's get the current power scheme
-    pwr_guid = current_pwr.readlines()[0].rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")  # Parse the GUID
+    current_pwr = subprocess.run("powercfg /GETACTIVESCHEME", capture_output=True, shell=True).stdout
+    pwr_guid = str(current_pwr, 'utf-8').rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")
     if state is True:  # Activate boost
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4", shell=True
         )
         if notification is True:
             notify("Boost ENABLED", config['notification_time'])  # Inform the user
     elif state is False:  # Deactivate boost
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0", shell=True
         )
         if notification is True:
             notify("Boost DISABLED", config['notification_time'])  # Inform the user
     elif state == 0:
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 0", shell=True
         )
         if notification is True:
             notify("Boost DISABLED", config['notification_time'])  # Inform the user
     elif state == 4:
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 4", shell=True
         )
         if notification is True:
             notify("Boost set to Efficient Aggressive", config['notification_time'])  # Inform the user
     elif state == 2:
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 2"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 2", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 2"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " 54533251-82be-4824-96c1-47b60b740d00 be337238-0d82-4146-a960-4f3749d470c7 2", shell=True
         )
         if notification is True:
             notify("Boost set to Aggressive", config['notification_time'])  # Inform the user
@@ -264,35 +264,35 @@ def set_boost(state, notification=True):
 
 
 def get_dgpu():
-    current_pwr = os.popen("powercfg /GETACTIVESCHEME")  # I know, it's ugly, but no other way to do that from py.
-    pwr_guid = current_pwr.readlines()[0].rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")  # Parse the GUID
-    pwr_settings = os.popen(
-        "powercfg /Q " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857"
-    )  # Let's get the dGPU status in the current power scheme
-    output = pwr_settings.readlines()  # We save the output to parse it afterwards
+    current_pwr = subprocess.run("powercfg /GETACTIVESCHEME", capture_output=True, shell=True).stdout
+    pwr_guid = str(current_pwr, 'utf-8').rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")
+    pwr_settings = subprocess.run(
+        "powercfg /Q " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857", capture_output=True, shell=True
+    ).stdout  # Let's get the dGPU status in the current power scheme
+    output = str(pwr_settings)  # We save the output to parse it afterwards
     dgpu_ac = parse_boolean(output[-3].rsplit(": ")[1].strip("\n"))  # Convert to boolean for "On/Off"
     return dgpu_ac
 
 
 def set_dgpu(state, notification=True):
     global G14dir
-    current_pwr = os.popen("powercfg /GETACTIVESCHEME")  # Just to be safe, let's get the current power scheme
-    pwr_guid = current_pwr.readlines()[0].rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")  # Parse the GUID
+    current_pwr = subprocess.run("powercfg /GETACTIVESCHEME", capture_output=True, shell=True).stdout
+    pwr_guid = str(current_pwr, 'utf-8').rsplit(": ")[1].rsplit(" (")[0].lstrip("\n")
     if state is True:  # Activate dGPU
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 2"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 2", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 2"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 2", shell=True
         )
         if notification is True:
             notify("dGPU ENABLED", config['notification_time'])  # Inform the user
     elif state is False:  # Deactivate dGPU
-        os.popen(
-            "powercfg /setacvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 0"
+        subprocess.run(
+            "powercfg /setacvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 0", shell=True
         )
-        os.popen(
-            "powercfg /setdcvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 0"
+        subprocess.run(
+            "powercfg /setdcvalueindex " + pwr_guid + " e276e160-7cb0-43c6-b20b-73f5dce39954 a1662ab2-9d34-4e53-ba8b-2639b9e20857 0", shell=True
         )
         os.system("\"" + G14dir+"\\restartGPUcmd.bat" + "\"")
         if notification is True:
@@ -302,8 +302,8 @@ def set_dgpu(state, notification=True):
 
 def check_screen():  # Checks to see if the G14 has a 120Hz capable screen or not
     checkscreenref = str(os.path.join(config['temp_dir'] + 'ChangeScreenResolution.exe'))
-    screen = os.popen(checkscreenref + " /m /d=0")  # /m lists all possible resolutions & refresh rates
-    output = screen.readlines()
+    screen = subprocess.run(checkscreenref + " /m /d=0", capture_output=True, shell=True).stdout  # /m lists all possible resolutions & refresh rates
+    output = str(screen, 'utf-8')
     for line in output:
         if re.search("@120Hz", line):
             return True
@@ -313,7 +313,7 @@ def check_screen():  # Checks to see if the G14 has a 120Hz capable screen or no
 
 def get_screen():  # Gets the current screen resolution
     getscreenref = str(os.path.join(config['temp_dir'] + 'ChangeScreenResolution.exe'))
-    screen = os.popen(getscreenref + " /l /d=0")  # /l lists current resolution & refresh rate
+    screen = subprocess.run(getscreenref + " /l /d=0", shell=True)  # /l lists current resolution & refresh rate
     output = screen.readlines()
     for line in output:
         if re.search("@120Hz", line):
@@ -327,8 +327,8 @@ def set_screen(refresh, notification=True):
         if refresh is None:
             set_screen(120)  # If screen refresh rate is null (not set), set to default refresh rate of 120Hz
         checkscreenref = str(os.path.join(config['temp_dir'] + 'ChangeScreenResolution.exe'))
-        os.popen(
-            checkscreenref + " /d=0 /f=" + str(refresh)
+        subprocess.run(
+            checkscreenref + " /d=0 /f=" + str(refresh), shell=True
         )
         if notification is True:
             notify("Screen refresh rate set to: " + str(refresh) + "Hz", config['notification_time'])
@@ -339,20 +339,20 @@ def set_screen(refresh, notification=True):
 def set_atrofac(asus_plan, cpu_curve=None, gpu_curve=None):
     atrofac = str(os.path.join(config['temp_dir'] + "atrofac-cli.exe"))
     if cpu_curve is not None and gpu_curve is not None:
-        os.popen(
-            atrofac + " fan --cpu " + cpu_curve + " --gpu " + gpu_curve + " --plan " + asus_plan
+        subprocess.run(
+            atrofac + " fan --cpu " + cpu_curve + " --gpu " + gpu_curve + " --plan " + asus_plan, shell=True
         )
     elif cpu_curve is not None and gpu_curve is None:
-        os.popen(
-            atrofac + " fan --cpu " + cpu_curve + " --plan " + asus_plan
+        subprocess.run(
+            atrofac + " fan --cpu " + cpu_curve + " --plan " + asus_plan, shell=True
         )
     elif cpu_curve is None and gpu_curve is not None:
-        os.popen(
-            atrofac + " fan --gpu " + gpu_curve + " --plan " + asus_plan
+        subprocess.run(
+            atrofac + " fan --gpu " + gpu_curve + " --plan " + asus_plan, shell=True
         )
     else:
-        os.popen(
-            atrofac + " plan " + asus_plan
+        subprocess.run(
+            atrofac + " plan " + asus_plan, shell=True
         )
 
 
@@ -363,8 +363,8 @@ def set_ryzenadj(tdp, notification=False):
         pass
     else:
         current_TDP = tdp
-        os.popen(
-            ryzenadj + " -a " + str(tdp) + " -b " + str(tdp)
+        subprocess.run(
+            ryzenadj + " -a " + str(tdp) + " -b " + str(tdp), shell=True
         )
         if(notification):
             notify("setting TDP to " + str(float(tdp)/1000) + "W", config['notification_time'])
