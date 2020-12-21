@@ -1,3 +1,5 @@
+# Changes:
+This updated version of G14Control-R2 brings about some fixes, including preventing those annoying window popups when changing plans, and also allowing all dGPUs to be enabled/disabled, not just the 2060 models. I may also add support for seeing the currently selected plan in the menu.
 # NOTE:
 This is an upstream fork of https://github.com/CappyT/g14control that has features and bug fixes that are not yet deemed stable for the official release, but that I have tested and are stable enough for my day-to-day use. There will be new EXEs bundled in the [releases](https://github.com/carverhaines/g14control/releases/latest) section that will be released between official releases by CappyT. For those that want the bleeding edge updates/testing branches (but testing and working).
 
